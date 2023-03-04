@@ -1,4 +1,3 @@
-
 use std::{borrow::BorrowMut, cell::RefCell, rc::Rc};
 
 use raylib::prelude::*;
@@ -41,17 +40,16 @@ fn main() {
         // fill the matric of None
         matrix: matrix,
     };
+    
     let mut game_state = GameState {
         gravity: GRAVITY,
         grid: grid,
+        moves: vec![],
+        collisions: vec![],
     };
-
-    game_state = game_state.add_ball(100.0, 350.0, BALL_RADIUS, Color::RED);
-
+    
     let mut ctx = 0;
 
-    let refCell = RefCell::new(game_state);
-    let rc = Rc::new(refCell);
 
     while !rl.window_should_close() {
         let mut d = rl.begin_drawing(&thread);
@@ -59,22 +57,16 @@ fn main() {
         d.draw_fps(0, 0);
         ctx = ctx + 1;
 
-        let moves = (*rc).borrow_mut().apply_gravity().update_position();
+        game_state
+            .apply_gravity()
+            .update_position()
+            .apply_moves()
+            .check_for_collisions()
+            .apply_collisions()
+            .add_ball(250.0 , 50.0, BALL_RADIUS, Color::RED, ctx)
+            .draw_balls(&mut d);
 
-        (*rc).borrow_mut().apply_moves(moves).draw_balls(&mut d);
-
-        // make a refcell of the gamestate and pass it to the collision detection
-
-
-        let mut collisions = vec![];
-        collisions  = (*rc).borrow_mut().check_for_collisions(collisions);
-        
-        game_state.apply_collisions( collisions);
-        
-        if ctx % 10 == 0 {
-            let x = (ctx % WIDTH as i32) as f32;
-            game_state.add_ball(x, 0.0, BALL_RADIUS, Color::RED);
-        }
+     
 
         //game_state.monitor_drift();
     }
@@ -84,9 +76,12 @@ fn main() {
 struct GameState {
     gravity: f32,
     grid: Grid,
+    moves: Vec<Move>,
+    collisions: Vec<(Ball, Ball)>
 }
 
-struct Ball {
+#[derive(Debug, Copy, Clone)]
+struct Ball  {
     x: f32,
     y: f32,
     radius: f32,
@@ -103,16 +98,20 @@ impl Ball {
         };
     }
 
-    fn Debug(&self) -> String {
+    fn debug(&self) -> String {
         return format!(
             "Ball {{ x: {}, y: {}, radius: {}}}",
             self.x, self.y, self.radius
         );
     }
+
 }
 
 impl GameState {
-    fn add_ball(mut self, x: f32, y: f32, radius: f32, color: Color) -> GameState {
+    fn add_ball(&mut self, x: f32, y: f32, radius: f32, color: Color, ctx : i32) -> &mut GameState {
+        if (ctx % 100 != 0) {
+            return self;
+        }
         self.grid.matrix[0][0] = Some(Ball {
             x: x,
             y: y,
@@ -141,7 +140,7 @@ impl GameState {
         return self;
     }
 
-    fn update_position(&mut self) -> Vec<Move> {
+    fn update_position(&mut self) -> &mut GameState {
         // update the position of the ball and put them in the corresponding cell
         let mut res: Vec<Move> = vec![];
         for (idx, vec) in self.grid.matrix.iter().enumerate() {
@@ -169,13 +168,11 @@ impl GameState {
                 }
             }
         }
-
-        println!("moves: {:?}", res);
-
-        return res;
+        self.moves = res;
+        return self;
     }
 
-    fn draw_balls(&mut self, d: &mut RaylibDrawHandle) {
+    fn draw_balls(&mut self, d: &mut RaylibDrawHandle)  -> &mut GameState{
         for vec in &self.grid.matrix {
             for ball_option in vec {
                 match ball_option {
@@ -186,10 +183,11 @@ impl GameState {
                 }
             }
         }
+        return self;
     }
 
-    fn apply_moves(&mut self, moves: Vec<Move>) -> &mut GameState {
-        for mov in moves {
+    fn apply_moves(&mut self) -> &mut GameState {
+        for mov in &self.moves {
             let (from_row, from_col) = mov.from;
             let (to_row, to_col) = mov.to;
 
@@ -205,7 +203,7 @@ impl GameState {
             for (jdx, ball_option) in vec.iter().enumerate() {
                 match ball_option {
                     Some(ball) => {
-                        println!("drifto: {} {} {}", ball.Debug(), idx, jdx);
+                        println!("drifto: {} {} {}", ball.debug(), idx, jdx);
                     }
                     None => (),
                 }
@@ -213,7 +211,7 @@ impl GameState {
         }
     }
 
-    fn check_for_collisions(& self, mut collisions : Vec<(&Ball, &Ball)>) -> Vec<(&Ball, &Ball)> {
+    fn check_for_collisions(&mut self) -> &mut GameState {
         for (idx, vec) in (&self.grid.matrix).iter().enumerate() {
             // get the indices of the ball
             for (jdx, ball_option) in vec.iter().enumerate() {
@@ -242,16 +240,16 @@ impl GameState {
                                                 + (ball.y - other_ball.y).powi(2))
                                             .sqrt();
                                             if distance <= (2.0 * BALL_RADIUS) {
-                                                collisions.push((ball, other_ball));
+                                                self.collisions.push((*ball, *other_ball));
                                                 println!(
                                                     "collision: {} {} {} {}",
-                                                    ball.Debug(),
+                                                    ball.debug(),
                                                     idx,
                                                     jdx,
                                                     self.grid.matrix[new_row][new_col]
                                                         .as_ref()
                                                         .unwrap()
-                                                        .Debug()
+                                                        .debug()
                                                 );
                                             }
                                         }
@@ -267,22 +265,39 @@ impl GameState {
             }
         }
         // stop borrowing self
-        return collisions;
+        return self;
     }
 
-    fn apply_collisions(&mut self, collision : Vec<(&Ball,&Ball)> ) -> &mut GameState {
-        for (ball, other_ball) in collision {
+    fn apply_collisions(&mut self) -> &mut GameState {
+        for (ball, other_ball) in &self.collisions {
             // move the ball away from each center
-            let distance = ((ball.x - other_ball.x).powi(2) + (ball.y - other_ball.y).powi(2)).sqrt();
+            let distance =
+                ((ball.x - other_ball.x).powi(2) + (ball.y - other_ball.y).powi(2)).sqrt();
             let x_diff = (ball.x - other_ball.x) / distance;
             let y_diff = (ball.y - other_ball.y) / distance;
             let x_move = x_diff * BALL_RADIUS;
             let y_move = y_diff * BALL_RADIUS;
-            let mut ball = self.grid.matrix[(ball.y / BALL_RADIUS) as usize][(ball.x / BALL_RADIUS) as usize].as_mut().unwrap();
+            
+            let mut ball = match self.grid.matrix[(ball.y / BALL_RADIUS) as usize]
+                [(ball.x / BALL_RADIUS) as usize]
+                .as_mut()
+                {
+                    Some(ball) => ball,
+                    None => continue,
+                };
+            
+            
             ball.x += x_move;
             ball.y += y_move;
-    
-            let mut other_ball = self.grid.matrix[(other_ball.y / BALL_RADIUS) as usize][(other_ball.x / BALL_RADIUS) as usize].as_mut().unwrap();
+
+            let mut other_ball = match  self.grid.matrix[(other_ball.y / BALL_RADIUS) as usize]
+                [(other_ball.x / BALL_RADIUS) as usize]
+                .as_mut()
+                {
+                    Some(other_ball) => other_ball,
+                    None => continue,
+                };
+
             other_ball.x -= x_move;
             other_ball.y -= y_move;
         }
@@ -292,7 +307,7 @@ impl GameState {
 
 // Make a grid of balls
 
-struct  Grid {
+struct Grid {
     width: usize,
     height: usize,
     rows: usize,
