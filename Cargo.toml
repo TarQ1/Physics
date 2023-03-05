@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 raylib = "3.7.0"
+generational-arena = "0.2"
