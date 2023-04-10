@@ -1,12 +1,6 @@
 #![recursion_limit = "20000"]
 
-use std::{
-    borrow::{Borrow, BorrowMut},
-    cell::RefCell,
-    cmp::{self, max, min},
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+use std::rc::Rc;
 
 pub mod ball;
 pub use ball::Ball;
@@ -16,15 +10,15 @@ use raylib::prelude::*;
 
 const HEIGHT: isize = 480;
 const WIDTH: isize = 640;
-const GRAVITY: f32 = 2.0;
+const GRAVITY: Vector2 = Vector2{ x: 0.0, y: 30.0};
 const BALL_RADIUS: f32 = 10.0;
 const FRICTION: f32 = 0.80;
 const ACCELERATION: f32 = 0.5;
 const MAX_SPEED: f32 = 20.0;
-const BALL_MASS: f32 = 1.0;
+const BALL_MASS: f32 = 10.0;
 const BALL_COEFF_RESTITUTION: f32 = 0.10;
 const TARGET_FPS: u32 = 60;
-const PADDING: f32 = 3.0;
+const MARGIN: f32 = 3.0;
 
 fn main() {
     let (mut rl, thread) = raylib::init()
@@ -40,7 +34,6 @@ fn main() {
     let mut color_generator = ColorGenerator::new();
 
     let mut game_state = GameState {
-        gravity: GRAVITY,
         moves: vec![],
         arena: arena,
         collisions: vec![],
@@ -50,6 +43,7 @@ fn main() {
 
     let mut ctx = 0;
     let mut nb_ball = 0;
+    let dt = 1.0 / TARGET_FPS as f32;
 
     while !rl.window_should_close() {
         let mut d = rl.begin_drawing(&thread);
@@ -73,9 +67,8 @@ fn main() {
             );
         }
         game_state
-            .handle_collisions()
-            .apply_velocity()
-            .apply_gravity()
+            // .handle_collisions(dt)
+            .apply_velocity(dt)
             .update_balls()
             .draw_balls(&mut d);
 
@@ -85,7 +78,6 @@ fn main() {
 
 // make a struct for the game state
 struct GameState {
-    gravity: f32,
     moves: Vec<Move>,
     arena: Arena<Ball>,
     collisions: Vec<(generational_arena::Index, generational_arena::Index)>,
@@ -126,8 +118,8 @@ impl GameState {
         let color = self.color_generator.consumme();
         self.arena.insert(Ball {
             position: Vector2::new(x, y),
-            last_position: Vector2::new(x, y),
-            velocity: Vector2::new(1.0, 0.0),
+            last_position: Vector2::new( x - 1.0, y),
+            acceleration: Vector2::new(1.0, 0.0),
             radius: radius,
             color: color,
             mass: BALL_MASS,
@@ -137,17 +129,12 @@ impl GameState {
         return self;
     }
 
-    fn apply_velocity(&mut self) -> &mut GameState {
+    fn apply_velocity(&mut self, dt: f32) -> &mut GameState {
         for (_, ball) in self.arena.iter_mut() {
-            ball.apply_velocity();
+            ball.acceleration += GRAVITY;
+            ball.apply(dt);
         }
-        return self;
-    }
-
-    fn apply_gravity(&mut self) -> &mut GameState {
-        for (_, ball) in self.arena.iter_mut() {
-            ball.apply_gravity(self.gravity);
-        }
+        self.handle_oob();
         return self;
     }
 
@@ -159,7 +146,7 @@ impl GameState {
         return self;
     }
 
-    fn handle_collisions(&mut self) -> &mut GameState {
+    fn handle_collisions(&mut self, dt: f32) -> &mut GameState {
         // make 8 substeps
 
         let nb_iter: u32 = 8;
@@ -167,9 +154,9 @@ impl GameState {
         let dt = 1.0 / (TARGET_FPS as f32 * nb_iter as f32);
 
         for i in 1..nb_iter {
-            self.check_for_collisions()
-                .solve_collisions(dt)
-                .handle_oob();
+            // self.check_for_collisions()
+            //     .solve_collisions(dt)
+            
         }
 
         return self;
@@ -219,59 +206,46 @@ impl GameState {
     }
     */
 
-    fn solve_collisions(&mut self, dt: f32) -> &mut GameState {
-        for (idx, jdx) in &self.collisions {
-            let (ball_a, ball_b) = self.arena.get2_mut(*idx, *jdx);
+    // fn solve_collisions(&mut self, dt: f32) -> &mut GameState {
+    //     for (idx, jdx) in &self.collisions {
+    //         let (ball_a, ball_b) = self.arena.get2_mut(*idx, *jdx);
 
-            let response_coef = BALL_COEFF_RESTITUTION;
+    //         let response_coef = BALL_COEFF_RESTITUTION;
 
-            let mut ball_a = ball_a.unwrap();
-            let mut ball_b = ball_b.unwrap();
-            let min_dist: f32 = ball_a.get_radius() + ball_b.get_radius();
+    //         let mut ball_a = ball_a.unwrap();
+    //         let mut ball_b = ball_b.unwrap();
+    //         let min_dist: f32 = ball_a.get_radius() + ball_b.get_radius();
 
-            let ball_a_pos = ball_a.get_position();
-            let ball_b_pos = ball_b.get_position();
+    //         let ball_a_pos = ball_a.get_position();
+    //         let ball_b_pos = ball_b.get_position();
 
-            let o2_o1 = Vector2::new(ball_a_pos.x - ball_b_pos.x, ball_a_pos.y - ball_b_pos.y);
-            let dist2 = o2_o1.x.powi(2) + o2_o1.y.powi(2);
-            let dist = dist2.sqrt();
+    //         let o2_o1 = Vector2::new(ball_a_pos.x - ball_b_pos.x, ball_a_pos.y - ball_b_pos.y);
+    //         let dist2 = o2_o1.x.powi(2) + o2_o1.y.powi(2);
+    //         let dist = dist2.sqrt();
 
-            let delta = 0.5 * response_coef * (dist - min_dist);
-            let col_vec = o2_o1 / dist * delta;
+    //         let delta = 0.5 * response_coef * (dist - min_dist);
+    //         let col_vec = o2_o1 / dist * delta;
 
-            if dist2 > 0.2 {
-                ball_a.set_velocity(ball_a.get_velocity() + col_vec / ball_a.get_mass());
-                ball_b.set_velocity(ball_b.get_velocity() - col_vec / ball_b.get_mass());
-            }
-        }
-        self.collisions.clear();
-        return self;
-    }
+    //         if dist2 > 0.2 {
+    //             ball_a.set_velocity(ball_a.get_velocity() + col_vec / ball_a.get_mass());
+    //             ball_b.set_velocity(ball_b.get_velocity() - col_vec / ball_b.get_mass());
+    //         }
+    //     }
+    //     self.collisions.clear();
+    //     return self;
+    // }
 
     fn handle_oob(&mut self) -> &mut GameState {
         for (_, ball) in self.arena.iter_mut() {
-            let mut positions = ball.get_position();
-            let mut velocity = ball.get_velocity();
-            if positions.x - BALL_RADIUS < 0.0 {
-                positions.x = 0.0 + BALL_RADIUS + PADDING;
-                velocity.x = velocity.x * -0.85;
+            if ball.position.x + ball.radius > WIDTH as f32 - MARGIN {
+                ball.position.x = WIDTH as f32 - MARGIN;
+            } else if ball.position.x < MARGIN {
+                ball.position.x = MARGIN;
             }
-            if positions.x + BALL_RADIUS > WIDTH as f32 {
-                positions.x = WIDTH as f32 - BALL_RADIUS - PADDING;
-                velocity.x = velocity.x * -0.85;
-            }
-            if positions.y - BALL_RADIUS < 0.0 {
-                positions.y = 0.0 + BALL_RADIUS + PADDING;
-                velocity.y = velocity.y * -0.85;
-            }
-            if positions.y + BALL_RADIUS > HEIGHT as f32 {
-                positions.y = HEIGHT as f32 - BALL_RADIUS - PADDING;
-                velocity.y = velocity.y * -0.85;
-            }
-            if positions != ball.get_position() {
-                println!("velocity: {:?}", velocity);
-                ball.set_position(positions);
-                ball.set_velocity(velocity);
+            if ball.position.y + ball.radius > HEIGHT as f32 {
+                ball.position.y = HEIGHT as f32 - MARGIN - ball.radius;
+            } else if ball.position.y < MARGIN {
+                ball.position.y = MARGIN;
             }
         }
         return self;
